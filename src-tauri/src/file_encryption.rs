@@ -7,6 +7,9 @@ use sha2::Sha256;
 use hmac::{Hmac, Mac, digest::MacError};
 use base64::{encode, decode};
 
+use tauri::State;
+use std::sync::Mutex;
+
 // use aes_gcm::{
 //     aead::{Aead, KeyInit, OsRng},
 //     Aes256Gcm, Nonce
@@ -14,25 +17,34 @@ use base64::{encode, decode};
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub struct FileContent {
-    password: Option<String>,
-    json: Option<String>,
+#[derive(Default)]
+pub struct GlobalState {
+    pub password: Mutex<Option<String>>, //unencrypted password input
+    pub file_password: Mutex<Option<String>>, //encrypted, base64 representation of password, extracted from file, unless file is empty
+    pub file_json: Mutex<Option<String>>, //encrypted json
 }
 
 
-fn verify_password(password: &str, key: &[u8], cipher_password: &[u8]) -> bool {
+fn verify_password(password: &str, key: &str, base64_password: &str) -> bool {
+    let key = key.as_bytes();
+
     let mut mac = HmacSha256::new_from_slice(key)
-        .expect("HMAC can take key of any size");
+        .expect("HMAC can take key of any siz&e");
     
     mac.update(password.as_bytes());
 
-    match mac.verify_slice(cipher_password) {
+    let base64_password = decode(base64_password).unwrap();
+    let base64_password: &[u8] = &base64_password;
+
+    match mac.verify_slice(base64_password) {
         Ok(()) => true,
         Err(MacError) => false,
     }
 }
 
-fn create_password(password: &str, key: &[u8]) -> String {
+fn encrypt_password(password: &str, key: &str) -> String {
+    let key = key.as_bytes();
+
     let mut mac = HmacSha256::new_from_slice(key)
         .expect("HMAC can take key of any size");
     
@@ -46,43 +58,102 @@ fn create_password(password: &str, key: &[u8]) -> String {
 }
 
 
+// #[tauri::command]
+// pub fn read_file(password: String) -> String {
+//     let key: String = match env::var("LALA") {
+//         Ok(k) => k,
+//         Err(_) => String::from("secret_key_for_all_those_things"),
+//     };
+
+//     let key: &[u8] = key.as_bytes();
+//     let base64_password = encrypt_password(&password[..], key);
+
+//     let f = File::open("hello.txt");
+//     let f = match f {
+//         Ok(file) => {
+//             file
+//         },
+//         Err(error) => match error.kind() {
+//             ErrorKind::NotFound => match File::create("hello.txt") {
+//                 Ok(mut fc) => {
+//                     fc.write_all(base64_password.as_bytes());
+//                     fc
+//                 },
+//                 Err(e) => panic!("Problem creating the file: {:?}", e),
+//             },
+//             other_error => panic!("Problem opening the file: {:?}", other_error),
+//         },
+//     };
+
+//     password
+// }
+
 #[tauri::command]
-pub fn read_file(password: String) -> String {
-    let key: String = match env::var("LALA") {
+pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
+    *global_state.password.lock().unwrap() = Some(password.clone());
+
+    let key: String = match env::var("SECRET_KEY") {
         Ok(k) => k,
         Err(_) => String::from("secret_key_for_all_those_things"),
     };
 
-    let key: &[u8] = key.as_bytes();
-    let base64_password = create_password(&password[..], key);
-    
-    
+    let base64_password = encrypt_password(&password[..], &key[..]);
 
-    let f = File::open("hello.txt");
-    let f = match f {
+    //TODO: change this code!!
+    let f = File::open("data.txt");
+    let mut f = match f {
         Ok(file) => {
-
+            (*global_state.file_password.lock().unwrap(), 
+             *global_state.file_json.lock().unwrap()) = extract_data(&file);
 
             file
         },
         Err(error) => match error.kind() {
-            ErrorKind::NotFound => match File::create("hello.txt") {
-                Ok(mut fc) => {
-                    fc.write_all(base64_password.as_bytes());
-                    fc
-                },
+            ErrorKind::NotFound => match File::create("data.txt") {
+                Ok(mut fc) => fc,
                 Err(e) => panic!("Problem creating the file: {:?}", e),
             },
             other_error => panic!("Problem opening the file: {:?}", other_error),
         },
     };
-
     
 
-    password
+    // println!("{:?}", global_state.file_password.lock().unwrap());
+
+    // match &*global_state.file_password.lock().unwrap() {
+    //     Some(str) => println!("{str}"),
+    //     None => println!("File password none("),
+    // }
+
+    match &*global_state.file_password.lock().unwrap() {
+        Some(pass) => {
+            if let Some(unencrypted) = &*global_state.password.lock().unwrap() {
+                if verify_password(&unencrypted[..], &key[..], &pass[..]) {
+                    println!("Password Verified");
+                } else {
+                    println!("Incorrect Password");
+                }
+            }
+        },
+        None => {},
+    }
+
+    f.write_all(base64_password.as_bytes());
+
+    let mut json: String = String::from("No password"); 
+
+    match &*global_state.password.lock().unwrap() {
+        Some(pass) => json = pass.to_owned(),
+        None => {},
+    };
+
+    json
 }
 
-fn extract_data(file: &File) -> Option<(String, String)> {
+#[tauri::command]
+
+
+fn extract_data(file: &File) -> (Option<String>, Option<String>) {
     let mut buf_reader = BufReader::new(file);
     let mut contents = String::new();
     buf_reader.read_to_string(&mut contents);
@@ -97,15 +168,24 @@ fn extract_data(file: &File) -> Option<(String, String)> {
         Some(pass) => {
             password = (*pass).to_owned();
         },
-        None => return None,
+        None => return (None, None),
     }
 
     match split.get(1) {
         Some(js) => {
             json = (*js).to_owned();
         },
-        None => {},
+        None => return (Some(password), None),
     }
 
-    Some((password, json))
+    (Some(password), Some(json))
 }
+
+//TODO: Implement writing JSON to file
+// fn write_data() {}
+
+//TODO: Implement ecnrypting JSON
+// fn encrypt_data() {}
+
+//TODO: Implement decrypting JSON
+// fn decrypt_data() {}
