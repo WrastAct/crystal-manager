@@ -5,29 +5,20 @@ use std::io::ErrorKind;
 use std::{env, ops::Deref};
 use sha2::Sha256;
 use hmac::{Hmac, Mac, digest::MacError};
+use base64::{encode, decode};
 
+// use aes_gcm::{
+//     aead::{Aead, KeyInit, OsRng},
+//     Aes256Gcm, Nonce
+// };
 
 type HmacSha256 = Hmac<Sha256>;
 
-// pub fn read_file(password: String) -> bool {
-//     let key: String = match env::var("LALA") {
-//         Ok(k) => k,
-//         Err(_) => String::from("secret_key_for_all_those_things"),
-//     };
+pub struct FileContent {
+    password: Option<String>,
+    json: Option<String>,
+}
 
-//     let key: &[u8] = key.as_bytes();
-
-
-//     let mut mac = HmacSha256::new_from_slice(key)
-//         .expect("HMAC can take key of any size");
-
-//     mac.update(password.as_bytes());
-
-//     let result = mac.finalize();
-//     let code_bytes = result.into_bytes();
-
-//     true
-// }
 
 fn verify_password(password: &str, key: &[u8], cipher_password: &[u8]) -> bool {
     let mut mac = HmacSha256::new_from_slice(key)
@@ -35,30 +26,23 @@ fn verify_password(password: &str, key: &[u8], cipher_password: &[u8]) -> bool {
     
     mac.update(password.as_bytes());
 
-    // let result = mac.finalize();
-    // let code_bytes = result.into_bytes();
-    // let code_bytes = code_bytes.deref().to_vec();
-
-    // for value in code_bytes {
-    //     print!("{} ", value);
-    // }
-
     match mac.verify_slice(cipher_password) {
         Ok(()) => true,
         Err(MacError) => false,
     }
 }
 
-fn create_password(password: &str, key: &[u8]) -> Vec<u8> {
+fn create_password(password: &str, key: &[u8]) -> String {
     let mut mac = HmacSha256::new_from_slice(key)
         .expect("HMAC can take key of any size");
     
     mac.update(password.as_bytes());
     let result = mac.finalize();
     let code_bytes = result.into_bytes();
-    let code_bytes = code_bytes.deref().to_vec();
+    let code_bytes = code_bytes.deref();
+    let base64_password: String = encode(code_bytes);
 
-    code_bytes
+    base64_password
 }
 
 
@@ -70,17 +54,21 @@ pub fn read_file(password: String) -> String {
     };
 
     let key: &[u8] = key.as_bytes();
-
+    let base64_password = create_password(&password[..], key);
+    
+    
 
     let f = File::open("hello.txt");
-    let mut f = match f {
-        Ok(mut file) => file,
+    let f = match f {
+        Ok(file) => {
+
+
+            file
+        },
         Err(error) => match error.kind() {
             ErrorKind::NotFound => match File::create("hello.txt") {
                 Ok(mut fc) => {
-                    let hash_password = create_password(&password[..], key);
-                    let hash_password: &[u8] = &hash_password; 
-                    fc.write_all(hash_password);
+                    fc.write_all(base64_password.as_bytes());
                     fc
                 },
                 Err(e) => panic!("Problem creating the file: {:?}", e),
@@ -89,15 +77,35 @@ pub fn read_file(password: String) -> String {
         },
     };
 
-    let mut reader = BufReader::new(f);
-    let mut buffer = Vec::new();
-    reader.read_to_end(&mut buffer);
-
-    if verify_password(&password[..], key, &buffer) {
-        println!("Password is correct");
-    } else {
-        println!("Wrong password");
-    }
+    
 
     password
+}
+
+fn extract_data(file: &File) -> Option<(String, String)> {
+    let mut buf_reader = BufReader::new(file);
+    let mut contents = String::new();
+    buf_reader.read_to_string(&mut contents);
+
+    let mut split = contents.split(":");
+    let split = split.collect::<Vec<&str>>();
+
+    let mut password: String = String::new();
+    let mut json: String = String::new();
+
+    match split.get(0) {
+        Some(pass) => {
+            password = (*pass).to_owned();
+        },
+        None => return None,
+    }
+
+    match split.get(1) {
+        Some(js) => {
+            json = (*js).to_owned();
+        },
+        None => {},
+    }
+
+    Some((password, json))
 }
