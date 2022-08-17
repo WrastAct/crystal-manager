@@ -16,6 +16,8 @@ use std::sync::Mutex;
 
 type HmacSha256 = Hmac<Sha256>;
 
+static FILE_NAME: &str = "data.txt";
+
 #[derive(Default)]
 pub struct GlobalState {
     pub password: Mutex<Option<String>>, //unencrypted password input
@@ -27,6 +29,25 @@ enum DataFile {
     FileExisted(File),
     FileCreated(File),
     FileEmpty(File),
+}
+
+#[tauri::command]
+pub fn enter_password(password: String, global_state: State<GlobalState>) -> bool {
+    let key: String = get_env_key();
+
+    match &*global_state.file_password.lock().unwrap() {
+        Some(base64_password) if !base64_password.is_empty() => {
+            return verify_password(&password[..], &key[..], &base64_password[..])
+        },
+        _ => {},
+    }
+
+    let base64_password: String = encrypt_password(&password[..], &key[..]);
+    // *global_state.file_password.lock().unwrap() = Some(base64_password.clone());
+    // let json: Option<String> = (*global_state.file_json.lock().unwrap()).clone();
+
+    write_data(Some(base64_password), None);
+    true
 }
 
 fn verify_password(password: &str, key: &str, base64_password: &str) -> bool {
@@ -66,10 +87,7 @@ fn encrypt_password(password: &str, key: &str) -> String {
 pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
     *global_state.password.lock().unwrap() = Some(password.clone());
 
-    let key: String = match env::var("SECRET_KEY") {
-        Ok(k) => k,
-        Err(_) => String::from("secret_key_for_all_those_things"),
-    };
+    let key: String = get_env_key();
 
     let base64_password = encrypt_password(&password[..], &key[..]);
 
@@ -144,7 +162,7 @@ fn extract_data(file: &File) -> (Option<String>, Option<String>) {
 
 
 fn file_exists(global_state: &State<GlobalState>) -> DataFile {
-    let f = File::open("data.txt");
+    let f = File::open(FILE_NAME);
     
     match f {
         Ok(file) => {
@@ -157,7 +175,7 @@ fn file_exists(global_state: &State<GlobalState>) -> DataFile {
             }
         },
         Err(error) => match error.kind() {
-            ErrorKind::NotFound => match File::create("data.txt") {
+            ErrorKind::NotFound => match File::create(FILE_NAME) {
                 Ok(mut fc) => return DataFile::FileCreated(fc),
                 Err(e) => panic!("Problem creating the file: {:?}", e),
             },
@@ -176,8 +194,47 @@ pub fn password_exists(global_state: State<GlobalState>) -> bool {
     }
 }
 
+fn get_env_key() -> String {
+    match env::var("SECRET_KEY") {
+        Ok(k) => k,
+        Err(_) => String::from("secret_key_for_all_those_things"),
+    }
+}
+
 //TODO: Implement writing JSON to file
-// fn write_data() {}
+fn write_data(password: Option<String>, json: Option<String>) {
+    let f = File::options().write(true).truncate(true).open(FILE_NAME);    
+
+    let mut f = match f {
+        Ok(file) => file,
+        Err(error) =>  {
+            panic!("Problem opening the file: {:?}", error)
+        },
+    };
+
+    let mut data: String = String::from("");
+
+    //TODO: Implement returning errors
+    match password {
+        Some(pass) => data.push_str(&pass[..]),
+        None => return,
+    };
+
+    match json {
+        Some(js) => {
+            data.push(':');
+            data.push_str(&js[..]);
+        },
+        None => {},
+    }
+
+    println!("{}", data);
+
+    match f.write_all(data.as_bytes()) {
+        Ok(_) => println!("writing successfull!"),
+        Err(err) => println!("Error! {:?}", err),
+    };
+}
 
 //TODO: Implement ecnrypting JSON
 // fn encrypt_data() {}
