@@ -9,7 +9,6 @@ use base64::{encode, decode};
 
 use tauri::State;
 use std::sync::Mutex;
-
 // use aes_gcm::{
 //     aead::{Aead, KeyInit, OsRng},
 //     Aes256Gcm, Nonce
@@ -24,6 +23,11 @@ pub struct GlobalState {
     pub file_json: Mutex<Option<String>>, //encrypted json
 }
 
+enum DataFile {
+    FileExisted(File),
+    FileCreated(File),
+    FileEmpty(File),
+}
 
 fn verify_password(password: &str, key: &str, base64_password: &str) -> bool {
     let key = key.as_bytes();
@@ -58,36 +62,6 @@ fn encrypt_password(password: &str, key: &str) -> String {
 }
 
 
-// #[tauri::command]
-// pub fn read_file(password: String) -> String {
-//     let key: String = match env::var("LALA") {
-//         Ok(k) => k,
-//         Err(_) => String::from("secret_key_for_all_those_things"),
-//     };
-
-//     let key: &[u8] = key.as_bytes();
-//     let base64_password = encrypt_password(&password[..], key);
-
-//     let f = File::open("hello.txt");
-//     let f = match f {
-//         Ok(file) => {
-//             file
-//         },
-//         Err(error) => match error.kind() {
-//             ErrorKind::NotFound => match File::create("hello.txt") {
-//                 Ok(mut fc) => {
-//                     fc.write_all(base64_password.as_bytes());
-//                     fc
-//                 },
-//                 Err(e) => panic!("Problem creating the file: {:?}", e),
-//             },
-//             other_error => panic!("Problem opening the file: {:?}", other_error),
-//         },
-//     };
-
-//     password
-// }
-
 #[tauri::command]
 pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
     *global_state.password.lock().unwrap() = Some(password.clone());
@@ -99,31 +73,12 @@ pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
 
     let base64_password = encrypt_password(&password[..], &key[..]);
 
-    //TODO: change this code!!
-    let f = File::open("data.txt");
-    let mut f = match f {
-        Ok(file) => {
-            (*global_state.file_password.lock().unwrap(), 
-             *global_state.file_json.lock().unwrap()) = extract_data(&file);
-
-            file
-        },
-        Err(error) => match error.kind() {
-            ErrorKind::NotFound => match File::create("data.txt") {
-                Ok(mut fc) => fc,
-                Err(e) => panic!("Problem creating the file: {:?}", e),
-            },
-            other_error => panic!("Problem opening the file: {:?}", other_error),
-        },
+    let file = file_exists(&global_state);
+    let mut file = match file {
+        DataFile::FileCreated(f) | DataFile::FileEmpty(f) => {f},
+        DataFile::FileExisted(f) => {f},
     };
-    
 
-    // println!("{:?}", global_state.file_password.lock().unwrap());
-
-    // match &*global_state.file_password.lock().unwrap() {
-    //     Some(str) => println!("{str}"),
-    //     None => println!("File password none("),
-    // }
 
     match &*global_state.file_password.lock().unwrap() {
         Some(pass) => {
@@ -138,7 +93,7 @@ pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
         None => {},
     }
 
-    f.write_all(base64_password.as_bytes());
+    file.write_all(base64_password.as_bytes());
 
     let mut json: String = String::from("No password"); 
 
@@ -147,10 +102,13 @@ pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
         None => {},
     };
 
+    match &*global_state.file_json.lock().unwrap() {
+        Some(js) => println!("{js}"),
+        None => println!("No JSON found"),
+    }
+
     json
 }
-
-#[tauri::command]
 
 
 fn extract_data(file: &File) -> (Option<String>, Option<String>) {
@@ -167,6 +125,9 @@ fn extract_data(file: &File) -> (Option<String>, Option<String>) {
     match split.get(0) {
         Some(pass) => {
             password = (*pass).to_owned();
+            if password.is_empty() {
+                return (None, None);
+            }
         },
         None => return (None, None),
     }
@@ -179,6 +140,40 @@ fn extract_data(file: &File) -> (Option<String>, Option<String>) {
     }
 
     (Some(password), Some(json))
+}
+
+
+fn file_exists(global_state: &State<GlobalState>) -> DataFile {
+    let f = File::open("data.txt");
+    
+    match f {
+        Ok(file) => {
+            (*global_state.file_password.lock().unwrap(), 
+            *global_state.file_json.lock().unwrap()) = extract_data(&file);
+
+            match &*global_state.file_password.lock().unwrap() {
+                Some(pass) => return DataFile::FileExisted(file),
+                None => return DataFile::FileEmpty(file),
+            }
+        },
+        Err(error) => match error.kind() {
+            ErrorKind::NotFound => match File::create("data.txt") {
+                Ok(mut fc) => return DataFile::FileCreated(fc),
+                Err(e) => panic!("Problem creating the file: {:?}", e),
+            },
+            other_error => panic!("Problem opening the file: {:?}", other_error),
+        },
+    };
+}
+
+
+#[tauri::command]
+pub fn password_exists(global_state: State<GlobalState>) -> bool {
+    let file = file_exists(&global_state);
+    match file {
+        DataFile::FileCreated(f) | DataFile::FileEmpty(f) => false,
+        DataFile::FileExisted(f) => true,
+    }
 }
 
 //TODO: Implement writing JSON to file
