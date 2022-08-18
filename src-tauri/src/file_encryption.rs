@@ -9,10 +9,7 @@ use base64::{encode, decode};
 
 use tauri::State;
 use std::sync::Mutex;
-// use aes_gcm::{
-//     aead::{Aead, KeyInit, OsRng},
-//     Aes256Gcm, Nonce
-// };
+
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -201,7 +198,7 @@ fn get_env_key() -> String {
     }
 }
 
-//TODO: Implement writing JSON to file
+//TODO: Implement writing JSON to file😂
 fn write_data(password: Option<String>, json: Option<String>) {
     let f = File::options().write(true).truncate(true).open(FILE_NAME);    
 
@@ -235,9 +232,3 @@ fn write_data(password: Option<String>, json: Option<String>) {
         Err(err) => println!("Error! {:?}", err),
     };
 }
-
-//TODO: Implement ecnrypting JSON
-// fn encrypt_data() {}
-
-//TODO: Implement decrypting JSON
-// fn decrypt_data() {}
