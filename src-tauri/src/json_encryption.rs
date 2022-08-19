@@ -13,12 +13,9 @@ use aes_gcm::aead::{
 use core::result::Result;
 use std::str;
 
-// Array of u8, fixed size 32 (32 bytes total)
-type Arr32u8 = GenericArray<u8, U32>;
-
 #[tauri::command]
 // TODO: Implement ecnrypting JSON
-pub fn encrypt_json(json: String, password: String) -> String {
+pub fn encrypt_json(json: &str, password: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
 
@@ -33,17 +30,17 @@ pub fn encrypt_json(json: String, password: String) -> String {
     base64_json
 }
 
-fn encryptor_json(json: String, key: GenericArray<u8, U32>) -> Result<Vec<u8>, Error> {
-    let cipher: Aes256Gcm = Aes256Gcm::new(&key);
+fn encryptor_json(json: &str, key: GenericArray<u8, U32>) -> Result<Vec<u8>, Error> {
+    let cipher = Aes256Gcm::new(&key);
     let nonce = Nonce::from_slice(b"unique nonce"); //96-bits
-    let lala: Payload = Payload { msg: (json.as_bytes().as_ref()), aad: (b"somerandomaad") };
-    let ciphertext = cipher.encrypt(nonce, lala);
+    let message: Payload = Payload { msg: (json.as_bytes().as_ref()), aad: (b"somerandomaad") };
+    let ciphertext = cipher.encrypt(nonce, message);
 
     ciphertext
 }
 
 #[tauri::command]
-pub fn decrypt_json(encrypted_json: String, password: String) -> String {
+pub fn decrypt_json(encrypted_json: &str, password: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
 
@@ -72,8 +69,8 @@ pub fn decrypt_json(encrypted_json: String, password: String) -> String {
 fn decryptor_json(encrypted_json: Vec<u8>, key: GenericArray<u8, U32>) -> Result<Vec<u8>, Error> {
     let cipher = Aes256Gcm::new(&key);
     let nonce = Nonce::from_slice(b"unique nonce"); //96-bits
-    let lala: Payload = Payload { msg: (encrypted_json.as_ref()), aad: (b"somerandomaad") };
-    let plaintext = cipher.decrypt(nonce, lala);
+    let message: Payload = Payload { msg: (encrypted_json.as_ref()), aad: (b"somerandomaad") };
+    let plaintext = cipher.decrypt(nonce, message);
 
     plaintext
 }

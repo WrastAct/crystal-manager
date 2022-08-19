@@ -13,6 +13,12 @@ use std::sync::Mutex;
 
 type HmacSha256 = Hmac<Sha256>;
 
+
+// mod super::json_encryption;
+use crate::json_encryption::{
+    encrypt_json, decrypt_json
+};
+
 static FILE_NAME: &str = "data.txt";
 
 #[derive(Default)]
@@ -198,7 +204,6 @@ fn get_env_key() -> String {
     }
 }
 
-//TODO: Implement writing JSON to file😂
 fn write_data(password: Option<String>, json: Option<String>) {
     let f = File::options().write(true).truncate(true).open(FILE_NAME);    
 
@@ -212,15 +217,19 @@ fn write_data(password: Option<String>, json: Option<String>) {
     let mut data: String = String::from("");
 
     //TODO: Implement returning errors
-    match password {
-        Some(pass) => data.push_str(&pass[..]),
+    let password = match password {
+        Some(pass) => {
+            data.push_str(&pass[..]);
+            pass
+        },
         None => return,
     };
 
     match json {
         Some(js) => {
             data.push(':');
-            data.push_str(&js[..]);
+            let encrypted_json: String = encrypt_json(&js[..], &password[..]);
+            data.push_str(&encrypted_json[..]);
         },
         None => {},
     }
