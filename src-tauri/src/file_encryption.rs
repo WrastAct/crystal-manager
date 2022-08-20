@@ -1,20 +1,16 @@
-use std::io::BufReader;
+use base64::{encode, decode};
+use hmac::{Hmac, Mac, digest::MacError};
+use sha2::Sha256;
 use std::fs::File;
+use std::io::BufReader;
 use std::io::prelude::*;
 use std::io::ErrorKind;
-use std::{env, ops::Deref};
-use sha2::Sha256;
-use hmac::{Hmac, Mac, digest::MacError};
-use base64::{encode, decode};
-
-use tauri::State;
 use std::sync::Mutex;
-
+use std::{env, ops::Deref};
+use tauri::State;
 
 type HmacSha256 = Hmac<Sha256>;
 
-
-// mod super::json_encryption;
 use crate::json_encryption::{
     encrypt_json, decrypt_json
 };
@@ -34,23 +30,22 @@ enum DataFile {
     FileEmpty(File),
 }
 
+// This function tests if user has already used the app or deleted binary with data
+// It MUST be started at the start of program 
+// Side effects include fetching data from file to GlobalState
+// UNLESS there is no file, in this case it is created
+// TODO: Optimize function and use events to invoke at start of program
 #[tauri::command]
-pub fn enter_password(password: String, global_state: State<GlobalState>) -> bool {
-    let key: String = get_env_key();
-
+pub fn data_exists(global_state: State<GlobalState>) -> bool {
     match &*global_state.file_password.lock().unwrap() {
-        Some(base64_password) if !base64_password.is_empty() => {
-            return verify_password(&password[..], &key[..], &base64_password[..])
-        },
+        Some(pass) if !pass.is_empty() => return true,
         _ => {},
     }
-
-    let base64_password: String = encrypt_password(&password[..], &key[..]);
-    // *global_state.file_password.lock().unwrap() = Some(base64_password.clone());
-    // let json: Option<String> = (*global_state.file_json.lock().unwrap()).clone();
-
-    write_data(Some(base64_password), None);
-    true
+    let file = file_exists(&global_state);
+    match file {
+        DataFile::FileCreated(_) | DataFile::FileEmpty(_) => false,
+        DataFile::FileExisted(_) => true,
+    }
 }
 
 fn verify_password(password: &str, key: &str, base64_password: &str) -> bool {
@@ -86,71 +81,26 @@ fn encrypt_password(password: &str, key: &str) -> String {
 }
 
 
-#[tauri::command]
-pub fn read_file(password: String, global_state: State<GlobalState>) -> String {
-    *global_state.password.lock().unwrap() = Some(password.clone());
-
-    let key: String = get_env_key();
-
-    let base64_password = encrypt_password(&password[..], &key[..]);
-
-    let file = file_exists(&global_state);
-    let mut file = match file {
-        DataFile::FileCreated(f) | DataFile::FileEmpty(f) => {f},
-        DataFile::FileExisted(f) => {f},
-    };
-
-
-    match &*global_state.file_password.lock().unwrap() {
-        Some(pass) => {
-            if let Some(unencrypted) = &*global_state.password.lock().unwrap() {
-                if verify_password(&unencrypted[..], &key[..], &pass[..]) {
-                    println!("Password Verified");
-                } else {
-                    println!("Incorrect Password");
-                }
-            }
-        },
-        None => {},
-    }
-
-    file.write_all(base64_password.as_bytes());
-
-    let mut json: String = String::from("No password"); 
-
-    match &*global_state.password.lock().unwrap() {
-        Some(pass) => json = pass.to_owned(),
-        None => {},
-    };
-
-    match &*global_state.file_json.lock().unwrap() {
-        Some(js) => println!("{js}"),
-        None => println!("No JSON found"),
-    }
-
-    json
-}
-
 
 fn extract_data(file: &File) -> (Option<String>, Option<String>) {
     let mut buf_reader = BufReader::new(file);
     let mut contents = String::new();
-    buf_reader.read_to_string(&mut contents);
+    match buf_reader.read_to_string(&mut contents) {
+        Ok(_) => {},
+        Err(e) => println!("{:?}", e),
+    };
 
-    let mut split = contents.split(":");
+    let split = contents.split(":");
     let split = split.collect::<Vec<&str>>();
 
     let mut password: String = String::new();
-    let mut json: String = String::new();
+    let json: String;
 
     match split.get(0) {
-        Some(pass) => {
+        Some(pass) if !password.is_empty() => {
             password = (*pass).to_owned();
-            if password.is_empty() {
-                return (None, None);
-            }
         },
-        None => return (None, None),
+        _ => return (None, None),
     }
 
     match split.get(1) {
@@ -173,13 +123,13 @@ fn file_exists(global_state: &State<GlobalState>) -> DataFile {
             *global_state.file_json.lock().unwrap()) = extract_data(&file);
 
             match &*global_state.file_password.lock().unwrap() {
-                Some(pass) => return DataFile::FileExisted(file),
+                Some(_) => return DataFile::FileExisted(file),
                 None => return DataFile::FileEmpty(file),
             }
         },
         Err(error) => match error.kind() {
             ErrorKind::NotFound => match File::create(FILE_NAME) {
-                Ok(mut fc) => return DataFile::FileCreated(fc),
+                Ok(fc) => return DataFile::FileCreated(fc),
                 Err(e) => panic!("Problem creating the file: {:?}", e),
             },
             other_error => panic!("Problem opening the file: {:?}", other_error),
@@ -188,15 +138,6 @@ fn file_exists(global_state: &State<GlobalState>) -> DataFile {
 }
 
 
-#[tauri::command]
-pub fn password_exists(global_state: State<GlobalState>) -> bool {
-    let file = file_exists(&global_state);
-    match file {
-        DataFile::FileCreated(f) | DataFile::FileEmpty(f) => false,
-        DataFile::FileExisted(f) => true,
-    }
-}
-
 fn get_env_key() -> String {
     match env::var("SECRET_KEY") {
         Ok(k) => k,
@@ -204,7 +145,11 @@ fn get_env_key() -> String {
     }
 }
 
-fn write_data(password: Option<String>, json: Option<String>) {
+
+// Function for writing data in file in specified format
+// BASE64_CIPHERED_PASSWORD:BASE64_ENCRYPTED_JSON_DATA
+// Takes as arguments BASE-64 encrypted values
+fn base64_write(password: &str, json: &str) {
     let f = File::options().write(true).truncate(true).open(FILE_NAME);    
 
     let mut f = match f {
@@ -214,30 +159,56 @@ fn write_data(password: Option<String>, json: Option<String>) {
         },
     };
 
-    let mut data: String = String::from("");
-
-    //TODO: Implement returning errors
-    let password = match password {
-        Some(pass) => {
-            data.push_str(&pass[..]);
-            pass
-        },
-        None => return,
-    };
-
-    match json {
-        Some(js) => {
-            data.push(':');
-            let encrypted_json: String = encrypt_json(&js[..], &password[..]);
-            data.push_str(&encrypted_json[..]);
-        },
-        None => {},
-    }
-
-    println!("{}", data);
-
+    let data = format!("{}:{}", password, json);
     match f.write_all(data.as_bytes()) {
         Ok(_) => println!("writing successfull!"),
         Err(err) => println!("Error! {:?}", err),
     };
+}
+
+#[tauri::command]
+pub fn save_data(json: String, global_state: State<GlobalState>) {
+    let password = match &*global_state.password.lock().unwrap() {
+        Some(pass) if !pass.is_empty() => (*pass).clone(),
+        _ => return,
+    };
+
+    let base64_json = encrypt_json(&json[..], &password[..]);
+    let base64_password = match &*global_state.file_password.lock().unwrap() {
+        Some(pass) if !pass.is_empty() => (*pass).clone(),
+        _ => "".to_owned(), 
+    };
+
+    base64_write(&base64_password[..], &base64_json[..]);
+}
+
+#[tauri::command]
+pub fn fetch_data(global_state: State<GlobalState>) -> String {
+    let encrypted_json = match &*global_state.file_json.lock().unwrap() {
+        Some(js) => (*js).clone(),
+        None => String::new(),
+    };
+
+    let password = match &*global_state.password.lock().unwrap() {
+        Some(pass) => (*pass).clone(),
+        None => String::new(),
+    };
+
+    decrypt_json(&encrypted_json[..], &password[..])
+}
+
+#[tauri::command]
+pub fn authenticate(password: String, global_state: State<GlobalState>) -> bool {
+    let key: String = get_env_key();
+    let base64_password: String = match &*global_state.file_password.lock().unwrap() {
+        Some(pass) => (*pass).clone(),
+        None => String::new(), // TODO: If there is no password, we should accept this as new
+    };
+
+    if verify_password(&password[..], &key[..], &base64_password[..]) {
+        *global_state.password.lock().unwrap() = Some(password);
+        
+        return true
+    }
+    false
 }

@@ -13,7 +13,6 @@ use aes_gcm::aead::{
 use core::result::Result;
 use std::str;
 
-#[tauri::command]
 // TODO: Implement ecnrypting JSON
 pub fn encrypt_json(json: &str, password: &str) -> String {
     let mut hasher = Sha256::new();
@@ -39,7 +38,6 @@ fn encryptor_json(json: &str, key: GenericArray<u8, U32>) -> Result<Vec<u8>, Err
     ciphertext
 }
 
-#[tauri::command]
 pub fn decrypt_json(encrypted_json: &str, password: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
