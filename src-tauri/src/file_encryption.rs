@@ -31,7 +31,7 @@ enum DataFile {
 }
 
 // This function tests if user has already used the app or deleted binary with data
-// It MUST be started at the start of program 
+// It MUST be run at the start of program 
 // Side effects include fetching data from file to GlobalState
 // UNLESS there is no file, in this case it is created
 // TODO: Optimize function and use events to invoke at start of program
@@ -97,7 +97,7 @@ fn extract_data(file: &File) -> (Option<String>, Option<String>) {
     let json: String;
 
     match split.get(0) {
-        Some(pass) if !password.is_empty() => {
+        Some(pass) if !pass.is_empty() => {
             password = (*pass).to_owned();
         },
         _ => return (None, None),
@@ -123,7 +123,7 @@ fn file_exists(global_state: &State<GlobalState>) -> DataFile {
             *global_state.file_json.lock().unwrap()) = extract_data(&file);
 
             match &*global_state.file_password.lock().unwrap() {
-                Some(_) => return DataFile::FileExisted(file),
+                Some(val) => return DataFile::FileExisted(file),
                 None => return DataFile::FileEmpty(file),
             }
         },
@@ -200,13 +200,19 @@ pub fn fetch_data(global_state: State<GlobalState>) -> String {
 #[tauri::command]
 pub fn authenticate(password: String, global_state: State<GlobalState>) -> bool {
     let key: String = get_env_key();
-    let base64_password: String = match &*global_state.file_password.lock().unwrap() {
-        Some(pass) => (*pass).clone(),
-        None => String::new(), // TODO: If there is no password, we should accept this as new
+    let (base64_password, is_new)= match &*global_state.file_password.lock().unwrap() {
+        Some(pass) => ((*pass).clone(), false), // Password was taken from file
+        None => {
+            let encrypted = encrypt_password(&password[..], &key[..]);
+            base64_write(&encrypted[..], ""); // Creates password and wipes data
+
+            (encrypted, true)
+        },
     };
 
-    if verify_password(&password[..], &key[..], &base64_password[..]) {
+    if is_new || verify_password(&password[..], &key[..], &base64_password[..]) {
         *global_state.password.lock().unwrap() = Some(password);
+        *global_state.file_password.lock().unwrap() = Some(base64_password);
         
         return true
     }

@@ -1,17 +1,19 @@
 use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, KeyInit, Payload},
+    aead::{
+        Aead, 
+        consts::U32,
+        Error,
+        generic_array::GenericArray, 
+        KeyInit, 
+        Payload
+    },
     Aes256Gcm, Nonce
 };
-use sha2::{Sha256, Digest};
 use base64::{encode, decode};
-
-use aes_gcm::aead::{
-    consts::U32,
-    Error
-};
-
 use core::result::Result;
+use sha2::{Sha256, Digest};
 use std::str;
+
 
 // TODO: Implement ecnrypting JSON
 pub fn encrypt_json(json: &str, password: &str) -> String {

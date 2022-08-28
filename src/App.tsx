@@ -3,76 +3,54 @@ import "./App.css";
 import { invoke } from "@tauri-apps/api";
 
 function App() {
-  const [pass, setPass] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
-  const [isValid, setIsValid] = useState(false);
-  const [json, setJson] = useState("");
-  const [base64json, setBase64Json] = useState("");
-  const [decryptedJson, setDecryptedJson] = useState("");
+  const [message, setMessage] = useState("");
+  const [data, setData] = useState("");
 
-  const clickFunc = async () => {
-    const result = await invoke<string>("read_file", { password: "passpass" });
-    setPass(result);
-  };
+  useEffect(() => {
+    invoke<boolean>("data_exists").then((doesExist) => {
+      if (doesExist) {
+        setData("Data exists");
+      } else {
+        setData("No data");
+      }
+    });
+  }, [setData]);
 
-  const changePasswordHandler = (event: any) => {
+  const passwordChangeHandler = (event: any) => {
     setPasswordInput(event.target.value);
   };
 
-  const changeJsonHandler = (event: any) => {
-    setJson(event.target.value);
+  const submitHandler = async (event: any) => {
+    event.preventDefault();
+
+    const result = await invoke<boolean>("authenticate", {
+      password: passwordInput,
+    });
+    if (result) {
+      setMessage("Password matched or created!");
+    } else {
+      setMessage("Incorrect password");
+    }
   };
-
-  const checkPassword = async () => {
-    const result = await invoke<boolean>("password_exists");
-    setIsValid(result);
-  };
-
-  const checkJson = async () => {
-    const result = await invoke<string>("encrypt_json", { json: json, password: passwordInput });
-    setBase64Json(result);
-    console.log(result);
-
-    const decResult = await invoke<string>("decrypt_json", { encryptedJson: result, password: passwordInput});
-    setDecryptedJson(decResult);
-    console.log(decResult);
-  }
-
-  const enterPassword = async () => {
-    const result = await invoke<boolean>("enter_password", { password: passwordInput});
-    console.log(result);
-  }
-
-  useEffect(() => {
-    checkPassword();
-  });
 
   return (
     <div>
-      <form>
-        <label htmlFor="passwordInput">Password:</label>
+      <form onSubmit={submitHandler}>
+        <label htmlFor="password">Password: </label>
         <input
-          type="text"
-          id="passwordInput"
-          name="passwordInput"
-          onChange={changePasswordHandler}
+          id="password"
+          name="password"
+          type={"text"}
+          required
+          minLength={8}
           value={passwordInput}
+          onChange={passwordChangeHandler}
         />
-        <label htmlFor="jsonInput">Jason:</label>
-        <input
-          type="text"
-          id="jsonInput"
-          name="jsonInput"
-          onChange={changeJsonHandler}
-          value={json}
-        />
+        <button type="submit">Submit</button>
       </form>
-      <button onClick={enterPassword}>Check Password</button>
-      {isValid && <button onClick={clickFunc}>Read File</button>}
-      <button onClick={checkJson}>Check Json</button>
-      <div>{pass}</div>
-      <div>{base64json}</div>
-      <div>{decryptedJson}</div>
+      <div>{message}</div>
+      <div>{data}</div>
     </div>
   );
 }

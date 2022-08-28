@@ -17,7 +17,11 @@ pub use crate::file_encryption::{
 
 fn main() {
   tauri::Builder::default()
-    .manage(GlobalState{ password: Default::default(), file_password: Default::default(), file_json: Default::default()})
+    .manage(GlobalState{ 
+      password: Default::default(), 
+      file_password: Default::default(), 
+      file_json: Default::default()
+    })
     .invoke_handler(tauri::generate_handler![
       fetch_data,
       save_data,
